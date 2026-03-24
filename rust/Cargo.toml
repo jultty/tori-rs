@@ -1,0 +1,14 @@
+[package]
+name = "tori"
+version = "0.8.0"
+description = "Track your system configuration and replicate it"
+license = "GPL-3.0-only"
+
+repository = "https://codeberg.org/tori/iganaq"
+homepage = "https://tori.jutty.dev/"
+documentation = "https://tori.jutty.dev/docs/"
+
+edition = "2024"
+rust-version = "1.94.0"
+
+[dependencies]
