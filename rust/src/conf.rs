@@ -1,22 +1,125 @@
-use crate::log;
+use std::{collections::HashMap, fs::{self, DirEntry}, path::PathBuf};
+
+use crate::log::{self, elog};
 
 pub fn load() -> Configuration {
     log::elog("Loading configuration");
 
-    // TODO A3.1. Before parsing the user arguments, a configuration file at
+    // DONE A3.1. Before parsing the user arguments, a configuration file at
     //       $XDG_CONFIG_DIR/tori/tori.conf MUST be read for a line such as:
     //       'su_command = doas'.
-    // TODO A3.2. If this line is not found, the su_command MUST default to 'su -c'.
-    // TODO A3.3. If it is found, the su_command used MUST be whatever was specified.
-    // TODO A3.4. Whatever su_command MUST be validated once for presence at the path
+    // DONE A4.2. If this line is not found, the su_command MUST default to 'su -c'.
+    // DONE A3.3. If it is found, the su_command used MUST be whatever was specified.
+    // DONE A3.4. Whatever su_command MUST be validated once for presence at the path
     //       provided or obtained from $PATH and filesystem permission to execute
 
-    Configuration {
-        su_command: String::default(),
+    let mut conf = Configuration {
+        su_command: vec!["su".into(), "-c".into(), "{% command %}".into()],
+    };
+
+    let root = get_root();
+    let Ok(contents) = fs::read_to_string(root.join("tori.conf")) else {
+        eprintln!("Failed reading configuration file at {root:?}");
+        return conf
+    };
+
+    let lines: Vec<Vec<String>> = contents.lines()
+        .map(|line| line.split('=')
+        .map(|s| s.trim().to_string()).collect()).collect();
+
+    let mut map: HashMap<String, String> = HashMap::new();
+
+    for line in &lines {
+        if let Some(key) = line.first() && let Some(value) = line.last() {
+            map.insert(key.clone(), value.clone());
+        }
     }
+
+    elog(&format!("{lines:#?}"));
+
+    if let Some(su_command) = map.get("su_command") {
+        let split = su_command.split(' ')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string()).collect();
+
+        if let Some(first) = conf.su_command.first() && let Ok(path_match) = resolve_from_path(first) {
+            elog(&format!("Succesfully resolved 'su_command' configuration value {su_command} to {}", path_match.to_string_lossy()));
+            conf.su_command = split;
+        } else {
+            eprintln!("Failed validation of 'su_command' configuration value");
+        }
+    }
+
+    conf
+}
+
+fn get_root() -> PathBuf {
+    if let Ok(xdg_config_dir) = std::env::var("XDG_CONFIG_DIR") {
+        let mut root = PathBuf::from(xdg_config_dir);
+        root.push("tori");
+        root
+    } else {
+        if let Some(mut root) = std::env::home_dir() {
+            root.push(".config");
+            root.push("tori");
+            root
+        } else {
+            if let Ok(user) = std::env::var("USER") {
+                let mut root = PathBuf::from("/home");
+                root.push(user);
+                root.push(".config");
+                root.push("tori");
+                root
+            } else {
+                eprintln!("Failed to determine home directory");
+                PathBuf::from("/etc/tori")
+            }
+        }
+    }
+}
+
+fn resolve_from_path(command: &str) -> Result<PathBuf, String> {
+    elog(&format!("Solving from PATH for {command}"));
+
+    let paths: Vec<PathBuf> = if let Ok(path) = std::env::var("PATH") {
+        path.split(':')
+            .filter(|p| !p.is_empty() && PathBuf::from(p).is_dir()).map(PathBuf::from).collect()
+    } else {
+        elog("Error: PATH is not set");
+        return Err("{command} not found: PATH is not set in the environment".to_string())
+    };
+
+    elog(&format!("Gathered paths {paths:?}"));
+    for path in paths {
+        elog(&format!("On path {path:?}"));
+        let Ok(mut entries) = fs::read_dir(path) else {
+            elog("Skipping: Could not read directory contents");
+            continue
+        };
+
+        let filter = |candidate: &Result<DirEntry, std::io::Error>| -> bool {
+            if let Ok(entry) = candidate {
+                entry.path().is_file() && entry.file_name() == command
+            } else { false }
+        };
+
+        let Some(filtered) = entries.find(filter) else {
+            elog("Skipping: No entries passed filter");
+            continue
+        };
+
+        if let Ok(found) = filtered {
+            return Ok(found.path())
+        } else {
+            elog("Skipping: Filtered match is Err");
+            continue
+        };
+
+    }
+    Err("{command} not found in any of the directories in PATH".to_string())
 }
 
 #[derive(Debug)]
 pub struct Configuration {
-    su_command: String,
+    su_command: Vec<String>,
 }
