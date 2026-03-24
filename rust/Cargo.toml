@@ -10,5 +10,3 @@ documentation = "https://tori.jutty.dev/docs/"
 
 edition = "2024"
 rust-version = "1.94.0"
-
-[dependencies]
