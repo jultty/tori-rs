@@ -10,3 +10,8 @@ documentation = "https://tori.jutty.dev/docs/"
 
 edition = "2024"
 rust-version = "1.94.0"
+
+[lints.clippy]
+zombie_processes = "deny"
+suspicious_command_arg_space = "warn"
+

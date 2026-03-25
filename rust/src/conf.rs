@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs::{self, DirEntry}, path::PathBuf};
 
-use crate::log::{self, elog};
+use crate::{run::Command, log::{self, elog}};
 
 pub fn load() -> Configuration {
     log::elog("Loading configuration");
@@ -14,7 +14,10 @@ pub fn load() -> Configuration {
     //       provided or obtained from $PATH and filesystem permission to execute
 
     let mut conf = Configuration {
-        su_command: vec!["su".into(), "-c".into(), "{% command %}".into()],
+        su_command: Command {
+            base: "su".into(),
+            args: vec!["-c".into(), "{% command %}".into()],
+        }
     };
 
     let root = get_root();
@@ -38,13 +41,13 @@ pub fn load() -> Configuration {
     elog(&format!("{lines:#?}"));
 
     if let Some(su_command) = map.get("su_command") {
-        let split = su_command.split(' ')
+        let split: Vec<String> = su_command.split(' ')
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string()).collect();
 
-        if let Some(first) = conf.su_command.first() && let Ok(path_match) = resolve_from_path(first) {
-            elog(&format!("Succesfully resolved 'su_command' configuration value {su_command} to {}", path_match.to_string_lossy()));
-            conf.su_command = split;
+        if let Some((base, args)) = split.split_first() && let Ok(resolved_path) = resolve_from_path(base) {
+            elog(&format!("Succesfully resolved 'su_command' configuration value {su_command} through PATH to {resolved_path:?}, with base {base} and args {args:?}"));
+            conf.su_command = Command { base: base.clone(), args: args.to_vec() }
         } else {
             eprintln!("Failed validation of 'su_command' configuration value");
         }
@@ -119,7 +122,9 @@ fn resolve_from_path(command: &str) -> Result<PathBuf, String> {
     Err("{command} not found in any of the directories in PATH".to_string())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Configuration {
-    su_command: Vec<String>,
+    pub su_command: Command,
 }
+
+
