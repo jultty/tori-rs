@@ -1,5 +1,0 @@
-(executable
-    (public_name tori)
-    (name main)
-    (libraries tori)
-)

@@ -1,7 +1,0 @@
-(library
-    (name tori)
-    (libraries unix)
-    (instrumentation (backend bisect_ppx))
-)
-
-(include_subdirs qualified)
