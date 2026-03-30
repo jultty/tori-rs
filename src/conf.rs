@@ -81,7 +81,10 @@ fn get_root() -> PathBuf {
             root
         } else {
             if let Ok(user) = std::env::var("USER") {
-                PathBuf::from("/home").join(user).join(".config").join("tori")
+                PathBuf::from("/home")
+                    .join(user)
+                    .join(".config")
+                    .join("tori")
             } else {
                 eprintln!("Failed to determine home directory");
                 PathBuf::from("/etc/tori")

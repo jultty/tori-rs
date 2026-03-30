@@ -4,7 +4,7 @@ use crate::{
     conf::Configuration,
     log::elog,
     os::{
-        OperatingSystem, Kind,
+        Kind, OperatingSystem,
         pkg::{self, Package, PackagerVariant, Packages},
     },
     run::{Command, executor::read},

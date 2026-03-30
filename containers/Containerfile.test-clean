@@ -1,0 +1,20 @@
+FROM debian:trixie
+MAINTAINER Juno Takano juno@jutty.dev
+
+# RUN apt-get --update install -y sudo
+# RUN useradd -mU sudoer
+# RUN echo "sudoer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+RUN mkdir -p /root/.config/tori
+RUN touch /root/.config/tori/tori.conf
+
+# USER sudoer
+# WORKDIR /home/sudoer
+# RUN mkdir -p .config/tori
+# RUN touch .config/tori/tori.conf
+# RUN echo "su_command = sudo" > .config/tori/tori.conf
+
+COPY tori /usr/local/bin/tori
+COPY test-clean.sh /usr/local/bin/test-clean.sh
+
+CMD test-clean.sh

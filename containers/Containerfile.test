@@ -1,0 +1,17 @@
+FROM debian:trixie
+MAINTAINER Juno Takano juno@jutty.dev
+
+RUN apt-get --update install -y sudo
+RUN useradd -mU sudoer
+RUN echo "sudoer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+USER sudoer
+WORKDIR /home/sudoer
+RUN mkdir -p .config/tori
+RUN touch .config/tori/tori.conf
+RUN echo "su_command = sudo" > .config/tori/tori.conf
+
+COPY tori /usr/local/bin/tori
+COPY test.sh /usr/local/bin/test.sh
+
+CMD test.sh
