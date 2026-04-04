@@ -1,11 +1,10 @@
 use crate::{
-    conf::Configuration,
     log::elog,
     run::{Order, Task, TaskKind},
 };
 use std::{env, path::PathBuf};
 
-pub fn parse(mut raw_args: env::Args, configuration: &Configuration) -> Order {
+pub fn parse(mut raw_args: env::Args) -> Order {
     let (argument, parameters): (String, Vec<String>) = if let Some(first) = raw_args.next() {
         if is_executable_path(&first) {
             elog("First argument is the executable path");
@@ -32,25 +31,20 @@ pub fn parse(mut raw_args: env::Args, configuration: &Configuration) -> Order {
 
     let make_order = |kind: TaskKind| -> Order {
         Order {
-            tasks: vec![Task::new(kind, &argument, parameters, configuration)],
+            tasks: vec![Task::new(kind, &argument, parameters)],
         }
     };
 
     elog(&format!("Command is {argument}"));
-    if argument == "version" || argument == "-v" || argument == "--version" {
-        make_order(TaskKind::Version)
-    } else if argument == "help" || argument == "-h" || argument == "--help" {
-        make_order(TaskKind::Help)
-    } else if argument == "install" {
-        make_order(TaskKind::PackageInstall)
-    } else if argument == "uninstall" {
-        make_order(TaskKind::PackageUninstall)
-    } else if argument == "auto" {
-        make_order(TaskKind::PackageListAuto)
-    } else if argument == "manual" {
-        make_order(TaskKind::PackageListManual)
-    } else {
-        make_order(TaskKind::Unrecognized)
+
+    match argument.as_str() {
+        "version" | "-v" | "--version" => make_order(TaskKind::Version),
+        "help" | "-h" | "--help" => make_order(TaskKind::Help),
+        "install" => make_order(TaskKind::PackageInstall),
+        "uninstall" => make_order(TaskKind::PackageUninstall),
+        "auto" => make_order(TaskKind::PackageListAuto),
+        "manual" => make_order(TaskKind::PackageListManual),
+        _ => make_order(TaskKind::Unrecognized),
     }
 }
 

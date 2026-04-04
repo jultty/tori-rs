@@ -20,14 +20,14 @@ pub fn fulfill(state: &State) -> Result<(), Error> {
                     state
                         .os()
                         .packager()
-                        .install(&packages, &state.configuration())?;
+                        .install(&packages, state.configuration())?;
                 }
                 TaskKind::PackageUninstall => {
                     let packages: Vec<Package> = task.parameters.iter().map(|s| s.into()).collect();
                     state
                         .os()
                         .packager()
-                        .uninstall(&packages, &state.configuration())?;
+                        .uninstall(&packages, state.configuration())?;
                 }
                 TaskKind::PackageListAuto => {
                     match state.os().packager().automatic() {

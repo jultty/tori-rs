@@ -12,7 +12,7 @@ pub trait Packages: Clone + Default + Debug + PartialEq + Eq {
     fn uninstall(&self, packages: &[Package], config: &Configuration) -> Result<(), Error>;
     fn manual(&self) -> Result<Vec<Package>, Error>;
     fn automatic(&self) -> Result<Vec<Package>, Error>;
-    fn variant(&self) -> Result<PackagerVariant, Error>;
+    fn variant(&self) -> &PackagerVariant;
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -51,12 +51,10 @@ impl Packages for Packager {
         }
     }
 
-    fn variant(&self) -> Result<PackagerVariant, Error> {
+    fn variant(&self) -> &PackagerVariant {
         match self {
             Packager::Apt(p) => p.variant(),
-            Packager::Unknown => Error::unknown_packager(
-                "Can't determine the package manager's variant because it is unknown",
-            ),
+            Packager::Unknown => &PackagerVariant::Unknown,
         }
     }
 }
@@ -68,24 +66,50 @@ pub enum PackagerVariant {
     Unknown,
 }
 
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Clone, Eq)]
 pub struct Package {
     name: String,
-    version: Option<Version>,
     manual: Option<bool>,
 }
 
 impl Package {
-    pub fn name(&self) -> String {
-        self.name.clone()
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn manual(&self) -> &Option<bool> {
+        &self.manual
     }
 
     pub fn new_with_manual(name: &str, manual: bool) -> Package {
         Package {
             name: name.to_string(),
-            version: None,
             manual: Some(manual),
         }
+    }
+}
+
+impl PartialEq for Package {
+    fn eq(&self, other: &Package) -> bool {
+        self.name() == other.name()
+    }
+}
+
+impl std::hash::Hash for Package {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name().hash(state);
+    }
+}
+
+impl PartialOrd for Package {
+    fn partial_cmp(&self, other: &Package) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Package {
+    fn cmp(&self, other: &Package) -> std::cmp::Ordering {
+        self.name().cmp(other.name())
     }
 }
 
@@ -136,38 +160,7 @@ impl<'s> From<&'s Package> for &'s str {
 
 impl std::fmt::Display for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let Some(version) = &self.version {
-            write!(f, "{} {}", &self.name, version)
-        } else {
-            write!(f, "{}", &self.name)
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
-struct Version {
-    major: u32,
-    minor: Option<u32>,
-    patch: Option<u32>,
-    qualifier: Option<String>,
-}
-
-impl std::fmt::Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let Some(minor) = &self.minor
-            && let Some(patch) = &self.patch
-            && let Some(qualifier) = &self.qualifier
-        {
-            write!(f, "{}.{minor}.{patch}-{qualifier}", &self.major)
-        } else if let Some(minor) = &self.minor
-            && let Some(patch) = &self.patch
-        {
-            write!(f, "{}.{minor}.{patch}", &self.major)
-        } else if let Some(minor) = &self.minor {
-            write!(f, "{}.{minor}", &self.major)
-        } else {
-            write!(f, "{}", &self.major)
-        }
+        write!(f, "{}", &self.name)
     }
 }
 
@@ -185,7 +178,7 @@ impl Error {
         }
     }
 
-    pub fn send<T>(message: &str, kind: ErrorKind) -> Result<T, Error> {
+    pub fn wrapped<T>(message: &str, kind: ErrorKind) -> Result<T, Error> {
         Err(Error::new(message, kind))
     }
 
@@ -215,6 +208,15 @@ impl From<run::Error> for Error {
     }
 }
 
+impl From<std::io::Error> for Error {
+    fn from(io_error: std::io::Error) -> Error {
+        Error {
+            message: format!("{:?}: {}", io_error.kind(), io_error),
+            kind: ErrorKind::IO,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ErrorKind {
     NotFound,
@@ -222,4 +224,5 @@ pub enum ErrorKind {
     MetadataFileRead,
     RunError,
     ExecutorError,
+    IO,
 }

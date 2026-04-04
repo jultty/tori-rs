@@ -11,12 +11,12 @@ pub struct OperatingSystem {
 }
 
 impl OperatingSystem {
-    pub fn kind(&self) -> Kind {
-        self.kind.clone()
+    pub const fn kind(&self) -> &Kind {
+        &self.kind
     }
 
-    pub fn packager(&self) -> Packager {
-        self.packager.clone()
+    pub const fn packager(&self) -> &Packager {
+        &self.packager
     }
 
     pub const fn new(kind: Kind, packager: Packager) -> OperatingSystem {

@@ -15,29 +15,29 @@ pub struct State {
 }
 
 impl State {
-    fn new(config: &Configuration, os: &OperatingSystem, orders: &[Order]) -> State {
+    fn new(configuration: Configuration, os: OperatingSystem, orders: &[Order]) -> State {
         State {
-            configuration: config.clone(),
-            os: os.clone(),
             orders: orders.to_vec(),
+            configuration,
+            os,
         }
     }
 
-    pub fn configuration(&self) -> Configuration {
-        self.configuration.clone()
+    pub const fn configuration(&self) -> &Configuration {
+        &self.configuration
     }
 
-    pub fn os(&self) -> OperatingSystem {
-        self.os.clone()
+    pub const fn os(&self) -> &OperatingSystem {
+        &self.os
     }
 
-    pub fn orders(&self) -> Vec<Order> {
-        self.orders.clone()
+    pub const fn orders(&self) -> &Vec<Order> {
+        &self.orders
     }
 }
 
-pub fn setup(config: &Configuration, orders: &[Order]) -> State {
-    State::new(config, &detect_os(), orders)
+pub fn setup(config: Configuration, orders: &[Order]) -> State {
+    State::new(config, detect_os(), orders)
 }
 
 fn detect_os() -> OperatingSystem {
@@ -46,11 +46,9 @@ fn detect_os() -> OperatingSystem {
     if let Ok(os_release) = std::fs::read_to_string("/etc/os-release") {
         elog(&os_release);
         let mut map: HashMap<String, String> = HashMap::new();
-        let lines: Vec<Option<(&str, &str)>> = os_release
-            .lines()
-            .map(|line| line.split_once('='))
-            .collect();
-        for line in lines.into_iter().flatten() {
+        let lines = os_release.lines().map(|line| line.split_once('='));
+
+        for line in lines.flatten() {
             let (key, value) = line;
             map.insert(key.to_string(), strip_quotes(value));
         }

@@ -1,4 +1,4 @@
-use std::fs::read_to_string;
+use std::{collections::HashSet, fs::read_to_string, iter};
 
 use crate::{
     conf::Configuration,
@@ -38,59 +38,53 @@ impl Packages for Apt {
             "dpkg-query",
             &["--show", "--showformat", "${Package} ${Status}\\n"],
         ))?;
-        let all: Vec<String> = raw_all
-            .lines()
-            .filter_map(|line| {
-                let pair = line.split_once(' ');
-                match pair {
-                    Some((pkg, "install ok installed")) => Some(pkg.to_string()),
-                    Some(_) => None,
-                    None => {
-                        elog("Warning: Dropped a None pair when cleaning up package list");
-                        None
-                    }
+        let all = raw_all.lines().filter_map(|line| {
+            let pair = line.split_once(' ');
+            match pair {
+                Some((pkg, "install ok installed")) => Some(pkg.to_string()),
+                Some(_) => None,
+                None => {
+                    elog("Warning: Dropped a None pair when cleaning up package list");
+                    None
                 }
-            })
+            }
+        });
+
+        let auto_set: HashSet<String> = self
+            .automatic()?
+            .into_iter()
+            .map(|package| package.name().to_owned())
+            .collect();
+        let mut manual_packages: Vec<Package> = all
+            .into_iter()
+            .filter(|name| !auto_set.contains(name))
+            .map(|name| Package::new_with_manual(&name, true))
             .collect();
 
-        let auto_packages: Vec<Package> = self.automatic()?;
-        let mut manual_packages: Vec<Package> = vec![];
-
-        for package in all {
-            let auto = Package::new_with_manual(&package, false);
-            if !auto_packages.contains(&auto) {
-                manual_packages.push(Package::new_with_manual(&package, true));
-            }
-        }
-
+        manual_packages.sort();
         Ok(manual_packages)
     }
 
     fn automatic(&self) -> Result<Vec<Package>, pkg::Error> {
         let path = "/var/lib/apt/extended_states";
-        let Ok(extended_states) = read_to_string(path) else {
-            return pkg::Error::send(
-                &format!("Failed reading {path}"),
-                pkg::ErrorKind::MetadataFileRead,
-            );
-        };
-        let lines: Vec<String> = extended_states
+        let extended_states = read_to_string(path)?;
+
+        let lines: Vec<&str> = extended_states
             .lines()
-            .map(|s| s.to_string())
             .filter(|line| !line.is_empty())
             .collect();
 
-        let iterator = lines.chunks_exact(3);
-        let remainder = iterator.remainder();
-        if !remainder.is_empty() {
+        let chunks = lines.chunks_exact(3);
+        if !chunks.remainder().is_empty() {
             elog(&format!(
-                "Warning: Reading package extended states left a remainder: {remainder:?}"
+                "Warning: Package extended states read left a remainder: {:?}",
+                chunks.remainder()
             ));
         }
 
         let mut packages: Vec<Package> = vec![];
 
-        for chunk in iterator {
+        for chunk in chunks {
             if let Some(name_line) = chunk.first()
                 && let Some(auto_line) = chunk.get(2)
             {
@@ -140,11 +134,12 @@ impl Packages for Apt {
             }
         }
 
+        packages.sort();
         Ok(packages)
     }
 
-    fn variant(&self) -> Result<PackagerVariant, pkg::Error> {
-        Ok(self.variant.clone())
+    fn variant(&self) -> &PackagerVariant {
+        &self.variant
     }
 }
 
@@ -159,11 +154,11 @@ impl Apt {
             return Ok(());
         }
 
-        let mut args = vec![subcommand];
-        args.extend_from_slice(&packages.iter().map(|p| p.into()).collect::<Vec<&str>>());
+        let args: Vec<&str> = iter::once(subcommand)
+            .chain(packages.iter().map(|p| p.into()))
+            .collect();
 
         let command = Command::new("apt", &args).escalate(config)?;
-
         Ok(crate::run::executor::spawn(&command)?)
     }
 }
