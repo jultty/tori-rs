@@ -74,6 +74,7 @@ pub enum TaskKind {
 pub struct Command {
     pub base: String,
     pub args: Vec<String>,
+    escalated: bool,
 }
 
 impl Command {
@@ -104,6 +105,7 @@ impl Command {
 
         Ok(Command {
             base: config.su_command.command().clone().base,
+            escalated: true,
             args,
         })
     }
@@ -112,17 +114,69 @@ impl Command {
         Command {
             base: base.to_string(),
             args: args.iter().map(|e| e.to_string()).collect(),
+            escalated: false,
+        }
+    }
+
+    pub const fn escalated(&self) -> bool {
+        self.escalated
+    }
+}
+
+#[must_use]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct Transaction {
+    commands: Vec<TransactionCommand>,
+}
+
+impl Transaction {
+    pub fn single(command: &TransactionCommand) -> Transaction {
+        Transaction {
+            commands: vec![command.clone()],
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct TransactionCommand {
+    run: Command,
+    rollback: Command,
+    status: TransactionCommandStatus,
+    errors: Option<Vec<executor::Error>>,
+}
+
+impl TransactionCommand {
+    pub const fn new(run: Command, rollback: Command) -> TransactionCommand {
+        TransactionCommand {
+            run,
+            rollback,
+            status: TransactionCommandStatus::Pending,
+            errors: None,
+        }
+    }
+
+    pub fn push_error(&mut self, error: &executor::Error) {
+        self.errors.get_or_insert_with(Vec::new).push(error.clone());
+    }
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub enum TransactionCommandStatus {
+    #[default]
+    Pending,
+    Success,
+    PendingRollback,
+    Rolledback,
+    FailedRollback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     pub message: String,
     pub kind: ErrorKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorKind {
     BadSuCommandConfig,
 }

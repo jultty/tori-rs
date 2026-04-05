@@ -1,22 +1,41 @@
 use std::process;
 
-use crate::{os::pkg::Package, run::Command};
+use crate::{
+    log::elog,
+    os::pkg::Package,
+    run::{Command, Transaction, TransactionCommandStatus},
+};
 
 pub mod meta;
 
-pub fn print(message: &str) -> Result<(), Error> {
-    println!("{message}");
-    Ok(())
-}
-
-pub fn print_packages(packages: Vec<Package>) -> Result<(), Error> {
-    for package in packages {
-        print(&format!("{package}"))?;
+// TODO Should this be a method of Transaction instead?
+pub fn commit(transaction: &mut Transaction) -> Result<(), Error> {
+    elog(&format!("Committing transaction: {transaction:#?}"));
+    for command in &mut transaction.commands {
+        if let Err(error) = spawn(&command.run) {
+            command.status = TransactionCommandStatus::PendingRollback;
+            command.push_error(&error);
+            if let Err(rollback_error) = spawn(&command.rollback) {
+                command.status = TransactionCommandStatus::FailedRollback;
+                command.push_error(&rollback_error);
+                elog(&format!("Failed rollback of command {:#?}", &command));
+                return Err(rollback_error);
+            } else {
+                command.status = TransactionCommandStatus::Rolledback;
+                elog(&format!("Successfully rolled back command {:#?}", &command));
+                return Err(error);
+            }
+        } else {
+            command.status = TransactionCommandStatus::Success;
+            elog(&format!("Successfully ran command {:#?}", &command));
+        }
     }
+
+    elog("Transaction committed");
     Ok(())
 }
 
-pub fn spawn(command: &Command) -> Result<(), Error> {
+pub(super) fn spawn(command: &Command) -> Result<(), Error> {
     if let Ok(mut child) = process::Command::new(&command.base)
         .args(&command.args)
         .spawn()
@@ -44,6 +63,13 @@ pub fn spawn(command: &Command) -> Result<(), Error> {
 }
 
 pub fn read(command: &Command) -> Result<String, Error> {
+    if command.escalated() {
+        return Err(Error {
+            message: "Read function is strictly rootless".to_string(),
+            kind: ErrorKind::RootlessReadOnly,
+        });
+    }
+
     if let Ok(output) = process::Command::new(&command.base)
         .args(&command.args)
         .output()
@@ -68,15 +94,29 @@ pub fn read(command: &Command) -> Result<String, Error> {
     }
 }
 
-#[derive(Debug)]
+pub fn print(message: &str) -> Result<(), Error> {
+    println!("{message}");
+    Ok(())
+}
+
+pub(super) fn print_packages(packages: Vec<Package>) -> Result<(), Error> {
+    for package in packages {
+        print(&format!("{package}"))?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Error {
     pub message: String,
     pub kind: ErrorKind,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     CommandNotFound,
+    RootlessReadOnly,
+    #[default]
     Unknown,
     FailedSpawn,
     ChildExit,

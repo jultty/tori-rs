@@ -7,7 +7,7 @@ use crate::{
         Kind, OperatingSystem,
         pkg::{self, Package, PackagerVariant, Packages},
     },
-    run::{Command, executor::read},
+    run::{Command, Transaction, TransactionCommand, executor::read},
 };
 
 pub const DEBIAN: OperatingSystem = OperatingSystem {
@@ -25,12 +25,20 @@ pub struct Apt {
 }
 
 impl Packages for Apt {
-    fn install(&self, packages: &[Package], config: &Configuration) -> Result<(), pkg::Error> {
-        super::debian::Apt::haul("install", packages, config)
+    fn install(
+        &self,
+        packages: &[Package],
+        config: &Configuration,
+    ) -> Result<Transaction, pkg::Error> {
+        super::debian::Apt::haul(&Operation::Install, packages, config)
     }
 
-    fn uninstall(&self, packages: &[Package], config: &Configuration) -> Result<(), pkg::Error> {
-        super::debian::Apt::haul("remove", packages, config)
+    fn uninstall(
+        &self,
+        packages: &[Package],
+        config: &Configuration,
+    ) -> Result<Transaction, pkg::Error> {
+        super::debian::Apt::haul(&Operation::Uninstall, packages, config)
     }
 
     fn manual(&self) -> Result<Vec<Package>, pkg::Error> {
@@ -145,20 +153,64 @@ impl Packages for Apt {
 
 impl Apt {
     fn haul(
-        subcommand: &str,
+        operation: &Operation,
         packages: &[Package],
         config: &Configuration,
-    ) -> Result<(), pkg::Error> {
+    ) -> Result<Transaction, pkg::Error> {
         if packages.is_empty() {
-            println!("Package selection is empty: Nothing to {subcommand}");
-            return Ok(());
+            println!("Package selection is empty: Nothing to {operation}");
+            return Ok(Transaction::default());
         }
 
-        let args: Vec<&str> = iter::once(subcommand)
+        // TODO This works as it is stated and is interesting as part of the
+        // PoC, but doesn't really make sense to install something that wasn't
+        // installed in the first place as the "rollback" of a failed uninstall
+        let rollback_operation = match operation {
+            Operation::Install => Operation::Uninstall,
+            Operation::Uninstall => Operation::Install,
+        };
+
+        let run_args: Vec<&str> = iter::once(operation.into())
             .chain(packages.iter().map(|p| p.into()))
             .collect();
 
-        let command = Command::new("apt", &args).escalate(config)?;
-        Ok(crate::run::executor::spawn(&command)?)
+        let rollback_args: Vec<&str> = iter::once(rollback_operation.into())
+            .chain(packages.iter().map(|p| p.into()))
+            .collect();
+
+        let run = Command::new("apt", &run_args).escalate(config)?;
+        let rollback = Command::new("apt", &rollback_args).escalate(config)?;
+        let transaction_command = TransactionCommand::new(run, rollback);
+        Ok(Transaction::single(&transaction_command))
+    }
+}
+
+enum Operation {
+    Install,
+    Uninstall,
+}
+
+impl<'s> From<Operation> for &'s str {
+    fn from(operation: Operation) -> &'s str {
+        match operation {
+            Operation::Install => "install",
+            Operation::Uninstall => "remove",
+        }
+    }
+}
+
+impl<'s> From<&'s Operation> for &'s str {
+    fn from(operation: &Operation) -> &str {
+        match *operation {
+            Operation::Install => "install",
+            Operation::Uninstall => "remove",
+        }
+    }
+}
+
+impl std::fmt::Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let s: &str = self.into();
+        write!(f, "{s}")
     }
 }

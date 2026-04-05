@@ -17,17 +17,19 @@ pub fn fulfill(state: &State) -> Result<(), Error> {
                 TaskKind::Help => executor::print("<long help>")?,
                 TaskKind::PackageInstall => {
                     let packages: Vec<Package> = task.parameters.iter().map(|s| s.into()).collect();
-                    state
+                    let mut transaction = state
                         .os()
                         .packager()
                         .install(&packages, state.configuration())?;
+                    executor::commit(&mut transaction)?;
                 }
                 TaskKind::PackageUninstall => {
                     let packages: Vec<Package> = task.parameters.iter().map(|s| s.into()).collect();
-                    state
+                    let mut transaction = state
                         .os()
                         .packager()
                         .uninstall(&packages, state.configuration())?;
+                    executor::commit(&mut transaction)?;
                 }
                 TaskKind::PackageListAuto => {
                     match state.os().packager().automatic() {

@@ -5,11 +5,16 @@ use core::{
     fmt::Debug,
 };
 
-use crate::{conf::Configuration, os::debian, run};
+use crate::{
+    conf::Configuration,
+    os::debian,
+    run::{self, Transaction},
+};
 
 pub trait Packages: Clone + Default + Debug + PartialEq + Eq {
-    fn install(&self, packages: &[Package], config: &Configuration) -> Result<(), Error>;
-    fn uninstall(&self, packages: &[Package], config: &Configuration) -> Result<(), Error>;
+    fn install(&self, packages: &[Package], config: &Configuration) -> Result<Transaction, Error>;
+    fn uninstall(&self, packages: &[Package], config: &Configuration)
+    -> Result<Transaction, Error>;
     fn manual(&self) -> Result<Vec<Package>, Error>;
     fn automatic(&self) -> Result<Vec<Package>, Error>;
     fn variant(&self) -> &PackagerVariant;
@@ -23,14 +28,18 @@ pub enum Packager {
 }
 
 impl Packages for Packager {
-    fn install(&self, packages: &[Package], config: &Configuration) -> Result<(), Error> {
+    fn install(&self, packages: &[Package], config: &Configuration) -> Result<Transaction, Error> {
         match self {
             Packager::Apt(p) => p.install(packages, config),
             Packager::Unknown => Error::unknown_packager(&format!("install {packages:?}")),
         }
     }
 
-    fn uninstall(&self, packages: &[Package], config: &Configuration) -> Result<(), Error> {
+    fn uninstall(
+        &self,
+        packages: &[Package],
+        config: &Configuration,
+    ) -> Result<Transaction, Error> {
         match self {
             Packager::Apt(p) => p.uninstall(packages, config),
             Packager::Unknown => Error::unknown_packager(&format!("uninstall {packages:?}")),
