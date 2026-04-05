@@ -10,11 +10,9 @@ if podman container exists "$tag"; then
     podman stop --time 3 "$tag"
 fi
 
-if ! [ -f "../target/debug/$binary" ]; then
-    cd ..
-    cargo build
-    cd -
-fi
+cd ..
+cargo build
+cd -
 
 cp -v ../target/debug/$binary $binary
 

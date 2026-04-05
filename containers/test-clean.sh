@@ -9,7 +9,7 @@ fail()      { printf " [FAIL] %b\n" "$1"; exit 1; }
 
 try() {
     actual="$1"
-    expected="$2"
+    expected="$(printf '%b' "$2")"
     fail_message="${3:-}"
     ok_message="${4:-}"
 
@@ -20,6 +20,8 @@ try() {
     fi
 }
 
+info "tori version $(tori version)"
+
 announce "Fresh install has no manually installed packages"
 tori_manual=$(tori manual)
 try "$tori_manual" ""
@@ -28,11 +30,13 @@ info "Updating apt packages"
 apt-get update >/dev/null
 
 announce "Manually installed package is the only package in 'tori manual'"
+info "Installing: figlet"
 apt-get install -y figlet >/dev/null 2>&1
 tori_manual=$(tori manual)
 try "$tori_manual" figlet
 
 announce "Manually installed packages are the only packages in 'tori manual'"
+info "Installing: sudo"
 apt-get install -y sudo >/dev/null 2>&1
-tori_manual=$(tori manual | sort)
+tori_manual=$(tori manual)
 try "$tori_manual" "$(printf 'figlet\nsudo')"
