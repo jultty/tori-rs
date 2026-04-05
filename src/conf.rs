@@ -5,23 +5,27 @@ use std::{
 };
 
 use crate::{
-    log::{self, elog},
+    dev::{log::elog},
     run::Command,
 };
 
 pub fn load() -> Result<Configuration, Error> {
-    log::elog("Loading configuration");
+    elog("Loading configuration");
 
     let mut candidate = Configuration::default();
 
     let root = get_root();
+    elog(&format!("Reading 'tori.conf' from: {root:?}"));
     let contents = fs::read_to_string(root.join("tori.conf"))?;
+    elog(&format!("Read configuration: {contents:?}"));
 
     let map: HashMap<String, String> = contents
         .lines()
         .filter_map(|line| line.split_once('='))
-        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
         .collect();
+
+    elog(&format!("Assembled configuration map: {map:#?}"));
 
     if let Some(su_command) = map.get("su_command") {
         let wraps = map.get("su_command_wraps").is_some_and(|v| v == "true");
@@ -36,6 +40,7 @@ pub fn load() -> Result<Configuration, Error> {
         }
     }
 
+    elog(&format!("Assembled configuration candidate: {candidate:?}"));
     Ok(candidate)
 }
 
@@ -183,9 +188,10 @@ impl Default for SuCommand {
     }
 }
 
+#[derive(Debug)]
 pub struct Error {
-    message: String,
-    kind: ErrorKind,
+    pub message: String,
+    pub kind: ErrorKind,
 }
 
 impl Error {
@@ -221,6 +227,7 @@ impl From<std::io::Error> for Error {
     }
 }
 
+#[derive(Debug)]
 pub enum ErrorKind {
     CommandNotInPath,
     VarError,
@@ -240,5 +247,60 @@ impl std::fmt::Display for ErrorKind {
             IO => "Input/Output error",
         };
         write!(f, "{s}")
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::panic_in_result_fn, //clippy::unwrap_in_result
+)]
+mod serial_tests {
+    use std::{env, fs, os::unix::fs::PermissionsExt as _, io::{Write as _}};
+    use super::*;
+    use crate::{dev::test::{Directories, Error}};
+
+    #[test]
+    fn failed_config_read() -> Result<(), Error> {
+        let dirs = Directories::setup("failed_config_read")?;
+
+        fs::write(&dirs.conf, [1, 0, 1])?;
+        let mut permissions = fs::metadata(&dirs.conf)?.permissions();
+        permissions.set_mode(0o200);
+        fs::set_permissions(&dirs.conf, permissions)?;
+
+        let new_permissions = fs::metadata(&dirs.conf)?.permissions();
+        assert_eq!(new_permissions.mode() & 0o777, 0o200);
+
+        let error = load().unwrap_err();
+
+        assert!(matches!(&error.kind, ErrorKind::IO));
+        Ok(())
+    }
+
+    #[test]
+    fn prefer_system() -> Result<(), Error> {
+        let dirs = Directories::setup("prefer_system")?;
+
+        let mut conf = fs::File::create_new(&dirs.conf)?;
+        println!("conf: {conf:#?}");
+        println!("XDG_CONFIG_DIR: {:#?}", env::var("XDG_CONFIG_DIR"));
+
+        let conf_root_contents = dirs.conf_root.read_dir();
+        println!("conf_root_contents: {conf_root_contents:#?}");
+
+        let write_result = conf.write_all(b"merge_strategy = prefer system\n");
+        println!("write_result: {write_result:#?}");
+        conf.sync_all()?;
+
+        let mut perms = fs::metadata(&dirs.conf)?.permissions();
+        println!("perms: {perms:#?}");
+        perms.set_mode(0o664);
+        conf.set_permissions(perms)?;
+
+        let configuration = load()?;
+        println!("configuration: {configuration:#?}");
+
+        assert!(matches!(configuration.merge_strategy, MergeStrategy::PreferSystem));
+
+        Ok(())
     }
 }

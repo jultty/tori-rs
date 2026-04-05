@@ -4,7 +4,7 @@ use crate::{
     state::State,
 };
 
-pub fn fulfill(state: &State) -> Result<(), Error> {
+pub fn expedite(state: &State) -> Result<(), Error> {
     let orders = state.orders();
 
     for order in orders {

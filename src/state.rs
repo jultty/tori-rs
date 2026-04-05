@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     conf::Configuration,
-    log::elog,
+    dev::log::elog,
     os::OperatingSystem,
     run::{Command, Order, executor::read},
 };

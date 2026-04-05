@@ -2,7 +2,7 @@ use std::{collections::HashSet, fs::read_to_string, iter};
 
 use crate::{
     conf::Configuration,
-    log::elog,
+    dev::log::elog,
     os::{
         Kind, OperatingSystem,
         pkg::{self, Package, PackagerVariant, Packages},
@@ -269,9 +269,11 @@ mod tests {
         auto_set.insert("sunflower".to_string());
         auto_set.insert("turnip".to_string());
 
-        let manual = Apt::determine_manual(raw_all, &auto_set);
+        let mut manual = Apt::determine_manual(raw_all, &auto_set);
+        let (uniques, dupes) = manual.as_mut_slice().partition_dedup();
+        assert!(dupes.is_empty());
         assert_eq!(
-            manual,
+            uniques,
             vec![
                 "avocado".into(),
                 "carrot".into(),

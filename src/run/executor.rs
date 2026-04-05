@@ -1,7 +1,7 @@
 use std::process;
 
 use crate::{
-    log::elog,
+    dev::log::elog,
     os::pkg::Package,
     run::{Command, Transaction, TransactionCommandStatus},
 };

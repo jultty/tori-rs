@@ -170,3 +170,9 @@ used_underscore_items = "warn"
 useless_let_if_seq = "warn"
 zero_sized_map_values = "warn"
 zombie_processes = "deny"
+
+[profile.test.package.proptest]
+opt-level = 3
+
+[profile.test.package.rand_chacha]
+opt-level = 3
