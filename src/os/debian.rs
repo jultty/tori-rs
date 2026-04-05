@@ -46,6 +46,58 @@ impl Packages for Apt {
             "dpkg-query",
             &["--show", "--showformat", "${Package} ${Status}\\n"],
         ))?;
+
+        let auto_set: HashSet<String> = self
+            .automatic()?
+            .into_iter()
+            .map(|package| package.name().to_owned())
+            .collect();
+
+        Ok(Apt::determine_manual(&raw_all, &auto_set))
+    }
+
+    fn automatic(&self) -> Result<Vec<Package>, pkg::Error> {
+        Ok(Apt::determine_auto(&read_to_string(
+            "/var/lib/apt/extended_states",
+        )?))
+    }
+
+    fn variant(&self) -> &PackagerVariant {
+        &self.variant
+    }
+}
+
+impl Apt {
+    fn haul(
+        operation: &Operation,
+        packages: &[Package],
+        config: &Configuration,
+    ) -> Result<Transaction, pkg::Error> {
+        if packages.is_empty() {
+            println!("Package selection is empty: Nothing to {operation}");
+            return Ok(Transaction::default());
+        }
+
+        let rollback_operation = match operation {
+            Operation::Install => Operation::Uninstall,
+            Operation::Uninstall => Operation::Install,
+        };
+
+        let run_args: Vec<&str> = iter::once(operation.into())
+            .chain(packages.iter().map(|p| p.into()))
+            .collect();
+
+        let rollback_args: Vec<&str> = iter::once(rollback_operation.into())
+            .chain(packages.iter().map(|p| p.into()))
+            .collect();
+
+        let run = Command::new("apt", &run_args).escalate(config)?;
+        let rollback = Command::new("apt", &rollback_args).escalate(config)?;
+        let transaction_command = TransactionCommand::new(run, rollback);
+        Ok(Transaction::single(&transaction_command))
+    }
+
+    fn determine_manual(raw_all: &str, auto_set: &HashSet<String>) -> Vec<Package> {
         let all = raw_all.lines().filter_map(|line| {
             let pair = line.split_once(' ');
             match pair {
@@ -58,11 +110,6 @@ impl Packages for Apt {
             }
         });
 
-        let auto_set: HashSet<String> = self
-            .automatic()?
-            .into_iter()
-            .map(|package| package.name().to_owned())
-            .collect();
         let mut manual_packages: Vec<Package> = all
             .into_iter()
             .filter(|name| !auto_set.contains(name))
@@ -70,13 +117,10 @@ impl Packages for Apt {
             .collect();
 
         manual_packages.sort();
-        Ok(manual_packages)
+        manual_packages
     }
 
-    fn automatic(&self) -> Result<Vec<Package>, pkg::Error> {
-        let path = "/var/lib/apt/extended_states";
-        let extended_states = read_to_string(path)?;
-
+    fn determine_auto(extended_states: &str) -> Vec<Package> {
         let lines: Vec<&str> = extended_states
             .lines()
             .filter(|line| !line.is_empty())
@@ -138,50 +182,18 @@ impl Packages for Apt {
                     continue;
                 };
 
-                packages.push(Package::new_with_manual(name_value, auto_value == "0"));
+                if auto_value == "1" {
+                    packages.push(Package::new_with_manual(name_value, auto_value == "0"));
+                } else {
+                    elog(&format!(
+                        "Skipping: Package {name_value} has an auto-installed value different from 1"
+                    ));
+                }
             }
         }
 
         packages.sort();
-        Ok(packages)
-    }
-
-    fn variant(&self) -> &PackagerVariant {
-        &self.variant
-    }
-}
-
-impl Apt {
-    fn haul(
-        operation: &Operation,
-        packages: &[Package],
-        config: &Configuration,
-    ) -> Result<Transaction, pkg::Error> {
-        if packages.is_empty() {
-            println!("Package selection is empty: Nothing to {operation}");
-            return Ok(Transaction::default());
-        }
-
-        // TODO This works as it is stated and is interesting as part of the
-        // PoC, but doesn't really make sense to install something that wasn't
-        // installed in the first place as the "rollback" of a failed uninstall
-        let rollback_operation = match operation {
-            Operation::Install => Operation::Uninstall,
-            Operation::Uninstall => Operation::Install,
-        };
-
-        let run_args: Vec<&str> = iter::once(operation.into())
-            .chain(packages.iter().map(|p| p.into()))
-            .collect();
-
-        let rollback_args: Vec<&str> = iter::once(rollback_operation.into())
-            .chain(packages.iter().map(|p| p.into()))
-            .collect();
-
-        let run = Command::new("apt", &run_args).escalate(config)?;
-        let rollback = Command::new("apt", &rollback_args).escalate(config)?;
-        let transaction_command = TransactionCommand::new(run, rollback);
-        Ok(Transaction::single(&transaction_command))
+        packages
     }
 }
 
@@ -212,5 +224,183 @@ impl std::fmt::Display for Operation {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let s: &str = self.into();
         write!(f, "{s}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn determine_manual_given_empty_auto_set() {
+        let raw_all = "avocado install ok installed\n\
+            turnip install ok installed\n\
+            carrot install ok installed\n\
+            sunflower install ok installed\n\
+            pumpkin install ok installed\n\
+            squash install ok installed";
+
+        let auto_set: HashSet<String> = HashSet::default();
+
+        let manual = Apt::determine_manual(raw_all, &auto_set);
+        assert_eq!(
+            manual,
+            vec![
+                "avocado".into(),
+                "carrot".into(),
+                "pumpkin".into(),
+                "squash".into(),
+                "sunflower".into(),
+                "turnip".into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn determine_manual_given_nonempty_auto_set() {
+        let raw_all = "avocado install ok installed\n\
+            turnip install ok installed\n\
+            carrot install ok installed\n\
+            sunflower install ok installed\n\
+            pumpkin install ok installed\n\
+            squash install ok installed";
+
+        let mut auto_set: HashSet<String> = HashSet::default();
+        auto_set.insert("sunflower".to_string());
+        auto_set.insert("turnip".to_string());
+
+        let manual = Apt::determine_manual(raw_all, &auto_set);
+        assert_eq!(
+            manual,
+            vec![
+                "avocado".into(),
+                "carrot".into(),
+                "pumpkin".into(),
+                "squash".into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn determine_manual_given_empty_raw_input() {
+        let raw_all = "";
+
+        let mut auto_set: HashSet<String> = HashSet::default();
+        auto_set.insert("sunflower".to_string());
+        auto_set.insert("turnip".to_string());
+
+        let manual = Apt::determine_manual(raw_all, &auto_set);
+        assert!(manual.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn determine_manual_given_empty_auto_set(
+            package_1 in "[a-zA-Z0-9-_]{1,24}",
+            package_2 in "[a-zA-Z0-9-_]{1,24}",
+            package_3 in "[a-zA-Z0-9-_]{1,24}",
+            package_4 in "[a-zA-Z0-9-_]{1,24}",
+            package_5 in "[a-zA-Z0-9-_]{1,24}",
+            package_6 in "[a-zA-Z0-9-_]{1,24}",
+        ) {
+            let raw_all = format!("{package_1} install ok installed\n\
+                {package_2} install ok installed\n\
+                {package_3} install ok installed\n\
+                {package_4} install ok installed\n\
+                {package_5} install ok installed\n\
+                {package_6} install ok installed");
+
+            let auto_set: HashSet<String> = HashSet::default();
+
+            let manual = Apt::determine_manual(&raw_all, &auto_set);
+
+            let mut actual: Vec<String> = manual
+                .iter().map(|p| p.name().to_string()).collect();
+            actual.sort();
+            let mut expected = vec![
+                package_1,
+                package_2,
+                package_3,
+                package_4,
+                package_5,
+                package_6,
+            ];
+            expected.sort();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn determine_manual_given_nonempty_auto_set(
+            package_1 in "[a-zA-Z0-9-_]{1,24}",
+            package_2 in "[a-zA-Z0-9-_]{1,24}",
+            package_3 in "[a-zA-Z0-9-_]{1,24}",
+            package_4 in "[a-z]{1,8}\\p{Cyrillic}{1,8}\\p{Greek}{1,24}",
+            package_5 in "[a-z]{1,8}\\p{Cyrillic}{1,8}\\p{Greek}{1,24}",
+            package_6 in "[a-z]{1,8}\\p{Cyrillic}{1,8}\\p{Greek}{1,24}",
+        ) {
+            let mut args = [&package_1,
+                &package_2,
+                &package_3,
+                &package_4,
+                &package_5,
+                &package_6
+            ];
+            let (_, dupes) = &args.partition_dedup();
+            prop_assume!(dupes.is_empty());
+
+            let raw_all = format!("{package_1} install ok installed\n\
+                {package_2} install ok installed\n\
+                {package_3} install ok installed\n\
+                {package_4} install ok installed\n\
+                {package_5} install ok installed\n\
+                {package_6} install ok installed");
+
+            println!("raw_all: <{raw_all}>");
+
+            let mut auto_set: HashSet<String> = HashSet::default();
+            auto_set.insert(package_1);
+            auto_set.insert(package_3);
+            auto_set.insert(package_5);
+            println!("auto_set: <{auto_set:#?}>");
+
+            let manual = Apt::determine_manual(&raw_all, &auto_set);
+            println!("manual: <{manual:#?}>");
+
+            let mut actual: Vec<String> = manual
+                .iter().map(|p| p.name().to_string()).collect();
+            actual.sort();
+            let mut expected = vec![package_2, package_4, package_6];
+            expected.sort();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn determine_manual_given_empty_raw_input(
+            auto_package_1 in "[a-zA-Z0-9-_]{1,24}",
+            auto_package_2 in "[a-zA-Z0-9-_]{1,24}",
+            auto_package_3 in "",
+            auto_package_4 in "[a-z]{1,4}\\p{Cyrillic}{1,4}\\p{Greek}{1,24}",
+        ) {
+            let raw_all = "";
+
+            let mut auto_set: HashSet<String> = HashSet::default();
+            auto_set.insert(auto_package_1);
+            auto_set.insert(auto_package_2);
+            auto_set.insert(auto_package_3);
+            auto_set.insert(auto_package_4);
+
+            let manual = Apt::determine_manual(raw_all, &auto_set);
+            assert!(manual.is_empty());
+        }
     }
 }

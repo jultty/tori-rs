@@ -9,12 +9,16 @@ homepage = "https://tori.jutty.dev/"
 documentation = "https://tori.jutty.dev/docs/"
 
 edition = "2024"
-rust-version = "1.94.0"
+rust-version = "1.93.0"
+
+[dev-dependencies]
+proptest = "1.0.0"
 
 [lints.rust]
 nonstandard-style = "warn"
 future-incompatible = "warn"
 keyword-idents = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [lints.clippy]
 allow_attributes = "warn"

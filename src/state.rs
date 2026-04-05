@@ -87,3 +87,19 @@ fn strip_quotes(original: &str) -> String {
     };
     no_suffix.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn strip_quotes_props(
+            s1 in "[\\PC]{1,24}"
+        ) {
+            let stripped = strip_quotes(&format!(r#""{s1}""#));
+            assert_eq!(stripped, s1);
+        }
+    }
+}
