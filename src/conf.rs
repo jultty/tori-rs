@@ -1,23 +1,29 @@
 use std::{
     collections::HashMap,
     fs::{self, DirEntry},
+    os::unix::fs::PermissionsExt as _,
     path::PathBuf,
 };
 
-use crate::{
-    dev::{log::elog},
-    run::Command,
-};
+use proptest_derive::Arbitrary;
+
+use crate::{dev::log::elog, run::Command};
+
+#[derive(Debug, Arbitrary)]
+struct Raw {
+    su_command: Option<String>,
+    su_command_wraps: Option<String>,
+    merge_strategy: Option<String>,
+}
 
 pub fn load() -> Result<Configuration, Error> {
     elog("Loading configuration");
 
-    let mut candidate = Configuration::default();
-
     let root = get_root();
     elog(&format!("Reading 'tori.conf' from: {root:?}"));
+
     let contents = fs::read_to_string(root.join("tori.conf"))?;
-    elog(&format!("Read configuration: {contents:?}"));
+    elog(&format!("Read configuration file: {contents:?}"));
 
     let map: HashMap<String, String> = contents
         .lines()
@@ -27,24 +33,49 @@ pub fn load() -> Result<Configuration, Error> {
 
     elog(&format!("Assembled configuration map: {map:#?}"));
 
-    if let Some(su_command) = map.get("su_command") {
-        let wraps = map.get("su_command_wraps").is_some_and(|v| v == "true");
-        candidate.su_command = parse_su_command(su_command, wraps)?;
-    }
+    let raw = Raw {
+        su_command: map.get("su_command").cloned(),
+        su_command_wraps: map.get("su_command_wraps").cloned(),
+        merge_strategy: map.get("merge_strategy").cloned(),
+    };
 
-    if let Some(merge_strategy) = map.get("merge_strategy") {
-        candidate.merge_strategy = match merge_strategy.as_str() {
-            "prefer configuration" => MergeStrategy::PreferConfig,
-            "prefer system" => MergeStrategy::PreferSystem,
-            _ => MergeStrategy::default(),
+    elog(&format!("Read raw configuration: {raw:?}"));
+    Ok(parse(&raw))
+}
+
+fn parse(raw: &Raw) -> Configuration {
+    let default = Configuration::default();
+    let mut candidate = default;
+
+    if let Some(su_command_value) = &raw.su_command {
+        let wraps_value = match &raw.su_command_wraps {
+            Some(wraps) => wraps == "true",
+            None => false,
+        };
+
+        match parse_su_command(su_command_value, wraps_value) {
+            Ok(s) => candidate.su_command = s,
+            Err(error) => println!("Failed parsing su_comand configuration value: {error}"),
         }
     }
 
-    elog(&format!("Assembled configuration candidate: {candidate:?}"));
-    Ok(candidate)
+    if let Some(merge_strategy) = &raw.merge_strategy {
+        candidate.merge_strategy = match merge_strategy.as_str() {
+            "prefer configuration" => MergeStrategy::PreferConfig,
+            "prefer system" => MergeStrategy::PreferSystem,
+            any => {
+                println!("Unrecognized merge strategy: {any}");
+                MergeStrategy::default()
+            }
+        }
+    }
+
+    elog(&format!("Parsed configuration candidate: {candidate:?}"));
+    candidate
 }
 
 fn parse_su_command(config_value: &str, wraps: bool) -> Result<SuCommand, Error> {
+    // TODO this is a horrible way to split because it will unquote everything
     let split: Vec<&str> = config_value.split(' ').filter(|s| !s.is_empty()).collect();
 
     let Some((base, args)) = split.split_first() else {
@@ -54,12 +85,28 @@ fn parse_su_command(config_value: &str, wraps: bool) -> Result<SuCommand, Error>
         ));
     };
 
-    let Ok(resolved_base) = resolve_command(base) else {
-        return Err(Error::new(
-            "su_command does not resolve to a command in PATH",
-            ErrorKind::CommandNotInPath,
-        ));
+    let resolved_base = if PathBuf::from(base).is_absolute() {
+        PathBuf::from(base)
+    } else {
+        resolve_command(base)?
     };
+
+    if resolved_base.is_file()
+        && let Ok(metadata) = resolved_base.metadata()
+    {
+        let mode = metadata.permissions().mode();
+        if mode & 0o111 == 0 {
+            return Err(Error::new(
+                "su_command path does not point to an executable file",
+                ErrorKind::WrongPermissions,
+            ));
+        }
+    } else {
+        return Err(Error::new(
+            "su_command path does not point to a file or its metadata is unreadable",
+            ErrorKind::MetadataUnreadable,
+        ));
+    }
 
     let Some(resolved_base_str) = resolved_base.to_str() else {
         return Err(Error::new(
@@ -227,11 +274,20 @@ impl From<std::io::Error> for Error {
     }
 }
 
+#[cfg(test)]
+impl From<Error> for proptest::test_runner::TestCaseError {
+    fn from(error: Error) -> proptest::test_runner::TestCaseError {
+        proptest::test_runner::TestCaseError::fail(format!("{}: {}", error.kind, error.message))
+    }
+}
+
 #[derive(Debug)]
 pub enum ErrorKind {
     CommandNotInPath,
     VarError,
     MalformedConfigLine,
+    MetadataUnreadable,
+    WrongPermissions,
     UTF8,
     IO,
 }
@@ -243,6 +299,8 @@ impl std::fmt::Display for ErrorKind {
             VarError => "Environment variable error",
             CommandNotInPath => "Command not in PATH",
             MalformedConfigLine => "Malformed configuration line",
+            MetadataUnreadable => "Metadata unreadable",
+            WrongPermissions => "Wrong permissions",
             UTF8 => "Invalid characters could not be decoded (expected UTF-8)",
             IO => "Input/Output error",
         };
@@ -250,13 +308,15 @@ impl std::fmt::Display for ErrorKind {
     }
 }
 
+// TODO review this test
 #[cfg(test)]
-#[expect(clippy::panic_in_result_fn, //clippy::unwrap_in_result
-)]
+#[expect(clippy::panic_in_result_fn)]
 mod serial_tests {
-    use std::{env, fs, os::unix::fs::PermissionsExt as _, io::{Write as _}};
+    use proptest::property_test;
+    use std::{env, fs, io::Write as _, os::unix::fs::PermissionsExt as _};
+
     use super::*;
-    use crate::{dev::test::{Directories, Error}};
+    use crate::dev::test::{Directories, Error};
 
     #[test]
     fn failed_config_read() -> Result<(), Error> {
@@ -299,8 +359,78 @@ mod serial_tests {
         let configuration = load()?;
         println!("configuration: {configuration:#?}");
 
-        assert!(matches!(configuration.merge_strategy, MergeStrategy::PreferSystem));
+        assert!(matches!(
+            configuration.merge_strategy,
+            MergeStrategy::PreferSystem
+        ));
 
         Ok(())
+    }
+
+    #[property_test]
+    fn su_command_wrap_is_read_from_config(value: String) -> Result<(), Error> {
+        let dirs = Directories::setup("su_command_wraps_is_read_from_config")?;
+
+        let mut conf = fs::File::create_new(&dirs.conf)?;
+        conf.write_all(format!("su_command_wraps = {value}").as_bytes())?;
+        conf.sync_all()?;
+
+        let configuration = load()?;
+        let default = Configuration::default();
+
+        if value == "false" {
+            assert!(!configuration.su_command.wraps);
+        } else if configuration.su_command == default.su_command {
+            assert!(configuration.su_command.wraps);
+        } else {
+            assert!(value == "true");
+        }
+
+        Ok(())
+    }
+
+    #[property_test]
+    fn configuration_parses(raw: Raw) {
+        let parsed = parse(&raw);
+        let default = Configuration::default();
+
+        if let Some(su_command_value) = raw.su_command {
+            // these duplicated extractions are also in the tested
+            // code, this shpuld be in Command::from(&str)
+            let (base, args_opt) = match su_command_value.split_once(' ') {
+                Some((b, a)) => (b, Some(a)),
+                None => (su_command_value.as_str(), None),
+            };
+
+            let args = match args_opt {
+                Some(a) => vec![a],
+                None => vec![],
+            };
+
+            // this could also be a method of Command
+            if let Ok(resolved_su_command) = resolve_command(base) {
+                assert_eq!(parsed.su_command.command.base, resolved_su_command);
+            } else {
+                assert_eq!(parsed.su_command, default.su_command);
+            }
+        } else {
+            assert_eq!(parsed.su_command, default.su_command);
+        }
+
+        if let Some(merge_strategy) = &raw.merge_strategy {
+            use MergeStrategy::*;
+
+            // i guess this is fine (could be a match?) but it makes
+            // you think about how tests duplicate tautologies
+            if merge_strategy == "prefer system" {
+                assert!(matches!(parsed.merge_strategy, PreferSystem));
+            } else if merge_strategy == "prefer configuration" {
+                assert!(matches!(parsed.merge_strategy, PreferConfig));
+            } else {
+                assert!(matches!(parsed.merge_strategy, Interactive));
+            }
+        }
+
+        // TODO match raw.su_command_wraps {}
     }
 }

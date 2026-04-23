@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 74b674162f67e0a42dccabd5bde0a39fa18f11dfaecb6971995502f93a07fa41 # shrinks to SuCommandWrapsIsReadFromConfigArgs = SuCommandWrapsIsReadFromConfigArgs { value: "" }
+cc 00d0bfa64cfe51948411edf0dd89386ccc18f9644800172acf487b5373839cf8 # shrinks to ConfigurationParsesArgs = ConfigurationParsesArgs { raw: Raw { su_command: Some(""), su_command_wraps: None, merge_strategy: None } }
+cc 7b467bb66998ed166bac12dfb9bc8980f02d852d65ae337e3fac7a5d93f03c9a # shrinks to ConfigurationParsesArgs = ConfigurationParsesArgs { raw: Raw { su_command: None, su_command_wraps: None, merge_strategy: Some("") } }

@@ -1,6 +1,6 @@
 use std::{env, fs, io, path::PathBuf};
 
-use crate::{dev::log::elog, conf};
+use crate::{conf, dev::log::elog};
 
 #[derive(Debug)]
 pub struct Directories {
@@ -31,14 +31,16 @@ impl Directories {
             return Err(Error::with_io(
                 "Failed configuration root directory creation",
                 error,
-            ))
+            ));
         }
 
         if let Err(error) = env::set_current_dir(&tube) {
-            return Err(Error::with_io("Failed current directory change", error))
+            return Err(Error::with_io("Failed current directory change", error));
         }
 
-        unsafe { env::set_var("XDG_CONFIG_DIR", &xdg_conf); }
+        unsafe {
+            env::set_var("XDG_CONFIG_DIR", &xdg_conf);
+        }
 
         Ok(Directories {
             original,
@@ -76,7 +78,10 @@ impl Error {
     fn with_io(message: &str, inner: io::Error) -> Error {
         Error {
             message: String::from(message),
-            inner: Some(InnerErrors { io: Some(inner), conf: None }),
+            inner: Some(InnerErrors {
+                io: Some(inner),
+                conf: None,
+            }),
         }
     }
 }
@@ -103,13 +108,18 @@ impl From<String> for Error {
 }
 
 impl From<&str> for Error {
-    fn from(str: &str) -> Error { Error::from(String::from(str)) }
+    fn from(str: &str) -> Error {
+        Error::from(String::from(str))
+    }
 }
 
 impl From<io::Error> for Error {
     fn from(inner: io::Error) -> Error {
         let mut error = Error::from(inner.to_string());
-        error.inner = Some(InnerErrors { io: Some(inner), ..InnerErrors::default() });
+        error.inner = Some(InnerErrors {
+            io: Some(inner),
+            ..InnerErrors::default()
+        });
         error
     }
 }
@@ -118,7 +128,21 @@ impl From<conf::Error> for Error {
     fn from(conf_error: conf::Error) -> Error {
         Error {
             message: conf_error.message.clone(),
-            inner: Some(InnerErrors { conf: Some(conf_error), io: None }),
+            inner: Some(InnerErrors {
+                conf: Some(conf_error),
+                io: None,
+            }),
         }
+    }
+}
+
+#[cfg(test)]
+impl From<Error> for proptest::test_runner::TestCaseError {
+    fn from(error: Error) -> proptest::test_runner::TestCaseError {
+        proptest::test_runner::TestCaseError::fail(if let Some(inner) = error.inner {
+            format!("{}: {:#?}", error.message, inner)
+        } else {
+            error.message
+        })
     }
 }
