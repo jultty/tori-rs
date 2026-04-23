@@ -20,7 +20,7 @@ impl Directories {
     /// - Several I/O possibilities from working directory changing failures
     pub fn setup(dir_name: &str) -> Result<Directories, Error> {
         let original = env::current_dir()?;
-        let tube = original.join(format!("target/tubes/{dir_name}"));
+        let tube = original.join(format!("/tmp/tubes/{dir_name}"));
         let xdg_conf = tube.join(".config");
         let conf_root = xdg_conf.join("tori");
         let conf = conf_root.join("tori.conf");
