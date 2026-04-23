@@ -3,15 +3,6 @@ watch *args:
 
 alias w := watch
 
-[script]
-verify:
-    for solver in cadical bitwuzla cvc5 kissat minisat z3; do
-        printf '\n => trying solver %s\n\n' $solver; sleep 1
-        timeout 20m \
-            cargo kani --solver $solver \
-            && return
-    done
-
 [env("PROPTEST_CASES", "16640")]
 test pattern="":
     cargo test {{ pattern}} --timings -- --test-threads=1 'serial_tests::'
@@ -19,16 +10,23 @@ test pattern="":
     cargo test {{ pattern}} --timings --doc
     cargo test {{ pattern}} --timings --lib -- --skip 'serial_tests::'
 
-
+alias t:= test
 
 mutate:
+    -just mutate-single -- --test-threads=1 serial_tests::
+    -just mutate-single -- --skip serial_tests::
+
+alias m := mutate
+
+[private]
+mutate-single *cargo_test_args:
     cargo mutants --iterate \
         -E '<impl Debug<' \
         -E '<impl From<' \
         -E '<impl std::fmt::Display for ' \
         -E 'print_help -> bool' \
-        --output target/mutants
-
+        --output target/mutants \
+        -- {{ cargo_test_args }}
 
 cover:
     cargo llvm-cov --no-report
@@ -37,6 +35,16 @@ cover:
         | tail -1 | awk \
         '{ print " [ Regions:", $4, "• Functions:", $7, "• Lines:", $10, "]" }'
 
+alias c := cover
+
 cover-open:
     cargo llvm-cov report --open
 
+vet:
+    cargo vet
+
+deny:
+    cargo deny check
+
+check: && test vet deny
+    cargo check
